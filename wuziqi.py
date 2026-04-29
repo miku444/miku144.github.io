@@ -1,224 +1,210 @@
-import pygame
-import sys
-import random
+import tkinter as tk
+import math
 
-pygame.init()
 BOARD_SIZE = 15
-CELL = 40
-W = BOARD_SIZE * CELL
-H = BOARD_SIZE * CELL
+GRID_SIZE = 40
+EMPTY = 0
+BLACK = 1
+WHITE = 2
 
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-BG = (210, 180, 130)
+SEARCH_DEPTH = 3   # 👉 改成4会更变态（但更慢）
 
-screen = pygame.display.set_mode((W, H))
-pygame.display.set_caption("五子棋 - 人类几乎不可能赢版")
+class Gomoku:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("五子棋（变态AI版）")
 
-# 0空 1玩家黑 2AI白
-board = [[0] * BOARD_SIZE for _ in range(BOARD_SIZE)]
-player_turn = True
-game_over = False
+        self.canvas = tk.Canvas(root, width=GRID_SIZE*BOARD_SIZE, height=GRID_SIZE*BOARD_SIZE, bg="#DDB88C")
+        self.canvas.pack()
 
-dirs = [(0, 1), (1, 0), (1, 1), (1, -1)]
+        self.board = [[EMPTY]*BOARD_SIZE for _ in range(BOARD_SIZE)]
+        self.canvas.bind("<Button-1>", self.click)
 
-SCORE = {
-    'FIVE': 1000000,
-    'FOUR_LIVE': 500000,
-    'FOUR_DEAD': 50000,
-    'THREE_LIVE': 10000,
-    'THREE_DEAD': 1000,
-    'TWO_LIVE': 500,
-    'TWO_DEAD': 50,
-    'ONE': 1
-}
+        self.draw_board()
 
-def draw_board():
-    screen.fill(BG)
-    for i in range(BOARD_SIZE):
-        pygame.draw.line(screen, BLACK, (CELL//2, CELL//2+i*CELL), (W-CELL//2, CELL//2+i*CELL), 1)
-        pygame.draw.line(screen, BLACK, (CELL//2+i*CELL, CELL//2), (CELL//2+i*CELL, H-CELL//2), 1)
+    def draw_board(self):
+        for i in range(BOARD_SIZE):
+            self.canvas.create_line(GRID_SIZE/2, GRID_SIZE/2 + i*GRID_SIZE,
+                                    GRID_SIZE/2 + (BOARD_SIZE-1)*GRID_SIZE, GRID_SIZE/2 + i*GRID_SIZE)
+            self.canvas.create_line(GRID_SIZE/2 + i*GRID_SIZE, GRID_SIZE/2,
+                                    GRID_SIZE/2 + i*GRID_SIZE, GRID_SIZE/2 + (BOARD_SIZE-1)*GRID_SIZE)
 
-def draw_pieces():
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r][c] != 0:
-                x = c * CELL + CELL//2
-                y = r * CELL + CELL//2
-                color = BLACK if board[r][c] == 1 else WHITE
-                pygame.draw.circle(screen, color, (x, y), CELL//2 - 3)
+    def click(self, event):
+        x = round((event.y - GRID_SIZE/2) / GRID_SIZE)
+        y = round((event.x - GRID_SIZE/2) / GRID_SIZE)
 
-def get_click(pos):
-    x, y = pos
-    c = x // CELL
-    r = y // CELL
-    if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
-        return r, c
-    return None
+        if not (0 <= x < BOARD_SIZE and 0 <= y < BOARD_SIZE):
+            return
+        if self.board[x][y] != EMPTY:
+            return
 
-def check_win(r, c, role):
-    for dr, dc in dirs:
-        cnt = 1
-        tr, tc = r+dr, c+dc
-        while 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE and board[tr][tc] == role:
-            cnt += 1
-            tr += dr
-            tc += dc
-        tr, tc = r-dr, c-dc
-        while 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE and board[tr][tc] == role:
-            cnt += 1
-            tr -= dr
-            tc -= dc
-        if cnt >= 5:
-            return True
-    return False
+        self.place(x, y, BLACK)
 
-def eval_dir(r, c, dr, dc, role):
-    me = str(role)
-    op = str(3 - role)
-    line = []
-    for i in range(-4, 5):
-        nr, nc = r + dr*i, c + dc*i
-        if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE:
-            line.append(str(board[nr][nc]))
-        else:
-            line.append(op)
-    s = ''.join(line)
+        if self.win(x, y, BLACK):
+            self.show("你赢了（不太可能）")
+            return
 
-    if me*5 in s: return SCORE['FIVE']
-    if f'0{me*4}0' in s: return SCORE['FOUR_LIVE']
-    if me*4+'0' in s or '0'+me*4 in s: return SCORE['FOUR_DEAD']
-    if f'0{me*3}0' in s: return SCORE['THREE_LIVE']
-    if me*3+'00' in s or '00'+me*3 in s or f'0{me}0{me*2}0' in s: return SCORE['THREE_DEAD']
-    if f'0{me*2}0' in s: return SCORE['TWO_LIVE']
-    if me*2+'00' in s or '00'+me*2 in s: return SCORE['TWO_DEAD']
-    if f'0{me}0' in s: return SCORE['ONE']
-    return 0
+        self.root.after(100, self.ai_move)
 
-def point_score(r, c, role):
-    if board[r][c] != 0:
-        return -1
-    sc = 0
-    for dr, dc in dirs:
-        sc += eval_dir(r, c, dr, dc, role)
-    return sc
+    def place(self, x, y, player):
+        self.board[x][y] = player
+        color = "black" if player == BLACK else "white"
+        self.canvas.create_oval(
+            y*GRID_SIZE+8, x*GRID_SIZE+8,
+            y*GRID_SIZE+GRID_SIZE-8, x*GRID_SIZE+GRID_SIZE-8,
+            fill=color
+        )
 
-def evaluate():
-    ai = 0
-    player = 0
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r][c] == 1:
-                player += point_score(r, c, 1)
-            elif board[r][c] == 2:
-                ai += point_score(r, c, 2)
-    return ai - player
+    def ai_move(self):
+        _, move = self.minimax(SEARCH_DEPTH, -math.inf, math.inf, True)
+        if move:
+            x, y = move
+            self.place(x, y, WHITE)
+            if self.win(x, y, WHITE):
+                self.show("AI：结束了")
 
-def gen_candidates():
-    res = []
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r][c] == 0:
-                for dr in (-1, 0, 1):
-                    for dc in (-1, 0, 1):
-                        nr, nc = r+dr, c+dc
-                        if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE and board[nr][nc] != 0:
-                            res.append((r, c))
-                            break
+    # ================= AI核心 =================
+
+    def evaluate(self):
+        return self.score_player(WHITE) - self.score_player(BLACK)*1.2
+
+    def score_player(self, player):
+        score = 0
+        patterns = {
+            (5,0):100000,
+            (4,2):10000,
+            (4,1):5000,
+            (3,2):1000,
+            (3,1):200,
+            (2,2):50
+        }
+
+        for i in range(BOARD_SIZE):
+            for j in range(BOARD_SIZE):
+                if self.board[i][j] == player:
+                    for dx, dy in [(1,0),(0,1),(1,1),(1,-1)]:
+                        count, open_ends = self.count(i,j,dx,dy,player)
+                        score += patterns.get((count,open_ends),0)
+        return score
+
+    def count(self, x, y, dx, dy, player):
+        count = 1
+        open_ends = 0
+
+        for d in [1,-1]:
+            nx, ny = x, y
+            while True:
+                nx += dx*d
+                ny += dy*d
+                if 0<=nx<BOARD_SIZE and 0<=ny<BOARD_SIZE:
+                    if self.board[nx][ny] == player:
+                        count += 1
+                    elif self.board[nx][ny] == EMPTY:
+                        open_ends += 1
+                        break
                     else:
-                        continue
+                        break
+                else:
                     break
-    if not res:
-        return [(7, 7)]
-    return list(set(res))
+        return count, open_ends
 
-def minimax(depth, alpha, beta, is_max):
-    if depth == 0:
-        return evaluate()
-    candidates = gen_candidates()
-    if is_max:
-        max_sc = -float('inf')
-        for r, c in candidates:
-            if board[r][c] != 0:
-                continue
-            board[r][c] = 2
-            sc = minimax(depth-1, alpha, beta, False)
-            board[r][c] = 0
-            max_sc = max(max_sc, sc)
-            alpha = max(alpha, sc)
-            if beta <= alpha:
-                break
-        return max_sc
-    else:
-        min_sc = float('inf')
-        for r, c in candidates:
-            if board[r][c] != 0:
-                continue
-            board[r][c] = 1
-            sc = minimax(depth-1, alpha, beta, True)
-            board[r][c] = 0
-            min_sc = min(min_sc, sc)
-            beta = min(beta, sc)
-            if beta <= alpha:
-                break
-        return min_sc
+    def get_moves(self):
+        moves = set()
+        for i in range(BOARD_SIZE):
+            for j in range(BOARD_SIZE):
+                if self.board[i][j] != EMPTY:
+                    for dx in range(-2,3):
+                        for dy in range(-2,3):
+                            nx, ny = i+dx, j+dy
+                            if 0<=nx<BOARD_SIZE and 0<=ny<BOARD_SIZE:
+                                if self.board[nx][ny] == EMPTY:
+                                    moves.add((nx,ny))
+        if not moves:
+            return [(7,7)]
 
-def ai_best():
-    best = -float('inf')
-    moves = []
-    # 先看有没有一步杀
-    for r, c in gen_candidates():
-        board[r][c] = 2
-        if check_win(r, c, 2):
-            board[r][c] = 0
-            return (r, c)
-        board[r][c] = 0
-    # 再看要不要堵对方一步杀
-    for r, c in gen_candidates():
-        board[r][c] = 1
-        if check_win(r, c, 1):
-            board[r][c] = 0
-            return (r, c)
-        board[r][c] = 0
-    # 深度4层搜索
-    for r, c in gen_candidates():
-        if board[r][c] != 0:
-            continue
-        board[r][c] = 2
-        sc = minimax(4, -float('inf'), float('inf'), False)
-        board[r][c] = 0
-        if sc > best:
-            best = sc
-            moves = [(r, c)]
-        elif sc == best:
-            moves.append((r, c))
-    return random.choice(moves)
+        # ⭐ 排序（关键优化）
+        return sorted(moves, key=lambda m: self.move_score(m[0], m[1]), reverse=True)[:10]
 
-# 主循环
-while True:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
-        if event.type == pygame.MOUSEBUTTONDOWN and not game_over and player_turn:
-            pos = get_click(event.pos)
-            if pos:
-                r, c = pos
-                if board[r][c] == 0:
-                    board[r][c] = 1
-                    if check_win(r, c, 1):
-                        print("你赢了！（不可思议）")
-                        game_over = True
-                    player_turn = False
+    def move_score(self, x, y):
+        self.board[x][y] = WHITE
+        score = self.evaluate()
+        self.board[x][y] = EMPTY
+        return score
 
-    if not player_turn and not game_over:
-        r, c = ai_best()
-        board[r][c] = 2
-        if check_win(r, c, 2):
-            print("AI赢了！")
-            game_over = True
-        player_turn = True
+    def minimax(self, depth, alpha, beta, maximizing):
+        if depth == 0:
+            return self.evaluate(), None
 
-    draw_board()
-    draw_pieces()
-    pygame.display.flip()
+        moves = self.get_moves()
+        best_move = None
+
+        if maximizing:
+            max_eval = -math.inf
+            for x,y in moves:
+                self.board[x][y] = WHITE
+
+                if self.win(x,y,WHITE):
+                    self.board[x][y] = EMPTY
+                    return 100000, (x,y)
+
+                eval,_ = self.minimax(depth-1, alpha, beta, False)
+                self.board[x][y] = EMPTY
+
+                if eval > max_eval:
+                    max_eval = eval
+                    best_move = (x,y)
+
+                alpha = max(alpha, eval)
+                if beta <= alpha:
+                    break
+
+            return max_eval, best_move
+
+        else:
+            min_eval = math.inf
+            for x,y in moves:
+                self.board[x][y] = BLACK
+
+                if self.win(x,y,BLACK):
+                    self.board[x][y] = EMPTY
+                    return -100000, (x,y)
+
+                eval,_ = self.minimax(depth-1, alpha, beta, True)
+                self.board[x][y] = EMPTY
+
+                if eval < min_eval:
+                    min_eval = eval
+                    best_move = (x,y)
+
+                beta = min(beta, eval)
+                if beta <= alpha:
+                    break
+
+            return min_eval, best_move
+
+    # =========================================
+
+    def win(self, x, y, player):
+        for dx,dy in [(1,0),(0,1),(1,1),(1,-1)]:
+            count = 1
+            for d in [1,-1]:
+                nx,ny = x,y
+                while True:
+                    nx+=dx*d
+                    ny+=dy*d
+                    if 0<=nx<BOARD_SIZE and 0<=ny<BOARD_SIZE and self.board[nx][ny]==player:
+                        count+=1
+                    else:
+                        break
+            if count>=5:
+                return True
+        return False
+
+    def show(self, text):
+        self.canvas.create_text(300,300,text=text,fill="red",font=("Arial",28))
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    game = Gomoku(root)
+    root.mainloop()
